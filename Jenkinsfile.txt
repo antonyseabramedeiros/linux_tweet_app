@@ -1,0 +1,88 @@
+pipeline {
+  environment {
+    registry = "amede/linux-tweet-app"
+    registryCredential = 'dockerhub'
+    dockerImage = ''
+  }
+  agent any
+  stages {
+    stage('Cloning Git') {
+      steps {
+        git 'https://github.com/antonyseabramedeiros/linux_tweet_app.git'
+      }
+    }
+	stage('Linting') {
+		steps {
+			sh '''
+			tidy -q -e *.html
+			'''
+		}
+	}
+    stage('Building image') {
+      steps{
+        script {
+          dockerImage = docker.build registry + ":$BUILD_NUMBER"
+        }
+      }
+    }
+    stage('Deploy Image') {
+      steps{
+        script {
+          docker.withRegistry( '', registryCredential ) {
+            dockerImage.push()
+            }
+        }
+      }
+    }
+	stage('Create Kubernetes config file') {
+		steps {
+			withAWS(region: 'us-west-2', credentials: 'AWS') {
+				sh '''
+				aws eks --region us-west-2 update-kubeconfig --name jenkinskube
+				'''
+			}
+		}
+	}
+	stage('Deploy Blue container') {
+	  steps {
+		    withAWS(region:'us-west-2', credentials: 'AWS') {
+				sh '''
+			    kubectl apply -f /tmp/jenkinskube-deploy/blue-controller.json
+			    '''
+		    }
+	    }
+	}
+	stage('Deploy Green container') {
+	  steps {
+		    withAWS(region:'us-west-2', credentials: 'AWS') {
+				sh '''
+			    kubectl apply -f /tmp/jenkinskube-deploy/blue-controller.json
+			    '''
+		    }
+	    }
+	}
+	stage('Create service - selector=blue') {
+	  steps {
+		    withAWS(region:'us-west-2', credentials: 'AWS') {
+				sh '''
+			    kubectl apply -f /tmp/jenkinskube-deploy/blue-service.json
+			    '''
+		    }
+	    }
+	}
+	stage('Sanity check') {
+		steps {
+			input "Continue?"
+		}
+	}
+	stage('Update service - selector=green') {
+	  steps {
+		    withAWS(region:'us-west-2', credentials: 'AWS') {
+				sh '''
+			    kubectl apply -f /tmp/jenkinskube-deploy/green-service.json
+			    '''
+		    }
+	    }
+	}
+  }
+}
